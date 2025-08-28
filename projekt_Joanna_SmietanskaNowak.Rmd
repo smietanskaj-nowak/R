@@ -1,0 +1,202 @@
+---
+title: "Projekt zaliczeniowy"
+author: "Joanna Śmietańska-Nowak"
+date: "2024-12-03"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+Jako analizowany zbiór danych wybrałam College z pakietu ISLR. Zbiór ten zawiera dane o różnych uczelniach w USA podzielonych na 18 kategorii, m.in. typ uczelni (publiczna/prywatna), liczba aplikacji złożonych, liczba przyjętych aplikacji, liczba studentów dziennych i zaocznych, koszty utrzymania oraz materiałów do nauki, współczynnik ukończenia studiów.
+W projekcie podjęto próbę klasyfikacji typu uczelni jako `Private` (Yes/No) na podstawie takich parametrów jak `Outstate`, `Room.Board`, `F.Undergrad`, `Terminal`, `perc.alumni`, `Expend`, `S.F.Ratio`. Na początku zaimportowano dane oraz dopasowano model regresji logistycznej aby przewidzieć wartość `Private` na podstawie wybranych zmiennych.
+
+```{r College}
+library(ISLR)
+names(College)
+dim(College)
+?College
+head(College)
+summary(College)
+```
+Regresja logistyczna zmiennej `Private` względem wszystkich pozostałych:
+
+```{r multiRegressionAll}
+College$Private <- as.factor(College$Private)
+fit_all_logit <- glm(Private ~ Apps + Accept + Enroll + Top10perc + Top25perc + 
+                     F.Undergrad + P.Undergrad + Outstate + Room.Board + Books + Personal +
+                     PhD + Terminal + S.F.Ratio + perc.alumni + Expend + Grad.Rate, 
+                     family = binomial, data = College)
+summary(fit_all_logit)
+```
+
+
+```{r logistic}
+# Konwersja zmiennej 'Private' na liczbę
+College$Private <- as.factor(College$Private)
+
+priv_logistic <- list()
+priv_logistic$fit <- glm(Private ~ Outstate + Room.Board + F.Undergrad + Terminal + perc.alumni + Expend + S.F.Ratio, 
+                   family = binomial, data = College)
+summary(priv_logistic$fit)
+```
+Ocena istotności predyktorów:
+
+Istotne zmienne:
+
+`Outstate`: Dodatni, bardzo istotny, wzrost kosztów dla studentów spoza stanu wskazuje na uczelnię prywatną.
+`F.Undergrad`: Ujemny, bardzo istotny, wzrost liczby studentów dziennych wskazuje na uczelnię publiczną.
+`Terminal`: Ujemny, bardzo istotny, wyższy odsetek wykładowców z najwyższymi kwalifikacjami zmniejsza prawdopodobieństwo że uczelnia jest prywatna.
+`perc.alumni`: Dodatni, bardzo istotny, wyższy odsetek absolwentów przekazujących darowizny zwiększa prawdopodobieństwo, że uczelnia jest prywatna.
+
+Nieistotne zmienne (dla tego modelu):
+
+`Room.Board`: Koszty zakwaterowania i wyżywienia.
+`Expend`: Wydatki na studenta.
+`S.F.Ratio`: Stosunek liczby studentów do liczby wykładowców.
+
+```{r}
+priv_logistic$probs <- predict(priv_logistic$fit, type = "response")
+head(priv_logistic$probs)
+```
+```{r}
+contrasts(College$Private)
+```
+
+```{r logisticClass&ConfusionMatrix}
+priv_logistic$predicted <- ifelse(priv_logistic$probs > 0.5, "Yes", "No")
+priv_logistic$cm <- table(priv_logistic$predicted, College$Private)
+priv_logistic$cm
+```
+Powyższa tablica pomyłek wskazuje, że w zdecydowanej większości przypadków model trafnie przewiduje typ uczelni
+184 – liczba przypadków, gdzie rzeczywista klasa to `No` i model poprawnie przewidział `No`.
+21 – liczba przypadków, gdzie rzeczywista klasa to `No`, ale model błędnie przewidział `Yes`.
+28 – liczba przypadków, gdzie rzeczywista klasa to `Yes`, ale model błędnie przewidział `No`.
+544 – liczba przypadków, gdzie rzeczywista klasa to `Yes`, a model poprawnie przewidział `Yes`.
+
+Obliczenie proporcji błędów:
+```{r logisticErrorRate}
+(priv_logistic$cm[1, 2] + priv_logistic$cm[2, 1]) / sum(priv_logistic$cm)
+mean(priv_logistic$predicted != College$Private)
+```
+Na podstawie powyższych danych można stwierdzić, że model popełnia błąd klasyfikacji w 6.3% przypadków.
+
+Aby oszacować błąd testowy predykcji metodą zbioru walidacyjnego przeprowadzono podział zbioru danych `College` na podzbiory *uczący* i *testowy* w proporcji 4:1. 
+
+```{r trainAndTestSets}
+set.seed(123)
+train_index <- sample(1:nrow(College), 0.8 * nrow(College))
+train_data <- College[train_index, ]
+test_data <- College[-train_index, ]
+Private_test <- test_data$Private
+```
+
+```{r logisticTrain}
+dir_log_t <- list()
+dir_log_t$fit <- glm(Private ~ Outstate + Room.Board + F.Undergrad + Terminal + perc.alumni + Expend + S.F.Ratio, 
+                   family = binomial, data = College, subset = train_index)
+summary(dir_log_t$fit)
+```
+Ocena istotności predyktorów:
+
+Istotne zmienne:
+
+`Outstate`: Dodatni, bardzo istotny, wzrost kosztów dla studentów spoza stanu wskazuje na uczelnię prywatną.Dla każdego wzrostu kosztów o 1000 jednostek, szansa wzrasta o 0.7174.
+`F.Undergrad`: Ujemny, bardzo istotny, wzrost liczby studentów dziennych wskazuje na uczelnię publiczną. Dla każdego wzrostu liczby studentów dziennych o 1000, szansa spada o 0.6951.
+`Terminal`: Ujemny, bardzo istotny, wyższy odsetek wykładowców z najwyższymi kwalifikacjami zmniejsza prawdopodobieństwo że uczelnia jest prywatna. Dla wzrostu o 1 punkt procentowy, szansa spada o 0.07098.
+`perc.alumni`: Dodatni, umiarkowanie istotny, wyższy odsetek absolwentów przekazujących darowizny zwiększa prawdopodobieństwo, że uczelnia jest prywatna.Dla wzrostu o 1 punkt procentowy, szansa wzrasta o 0.05079.
+
+
+Nieistotne zmienne (dla tego modelu):
+
+`Room.Board`: Koszty zakwaterowania i wyżywienia.
+`Expend`: Wydatki na studenta.
+`S.F.Ratio`: Stosunek liczby studentów do liczby wykładowców.
+
+
+Predykcja dla danych ze zbioru *testowego*:
+```{r logisticPredictionTrain}
+test_data$Private <- as.factor(test_data$Private)
+dir_log_t$probs <- predict(dir_log_t$fit, test_data, type = "response")
+dir_log_t$predicted <- ifelse(dir_log_t$probs > 0.5, "Yes", "No")
+dir_logistic$cm <- table(dir_log_t$predicted, Private_test)
+dir_logistic$cm
+```
+Powyższa tablica pomyłek wskazuje, że w zdecydowanej większości przypadków model trafnie przewiduje typ uczelni: 
+35 – liczba przypadków, w których rzeczywista klasa to `No` i model poprawnie przewidział `No`.
+6 – liczba przypadków, w których rzeczywista klasa to `No`, ale model błędnie przewidział `Yes`.
+5 – liczba przypadków, w których rzeczywista klasa to `Yes`, ale model błędnie przewidział `No`.
+110 – liczba przypadków, w których rzeczywista klasa to `Yes` oraz model poprawnie przewidział `Yes`.
+
+Obliczenie proporcji błędów:
+
+```{r logisticErrorRate}
+(dir_logistic$cm[1, 2] + dir_logistic$cm[2, 1]) / sum(dir_logistic$cm)
+mean(dir_log_t$predicted != Private_test)
+```
+Wartość 0.0705 oznacza, że 7.05% przypadków w zbiorze testowym zostało błędnie sklasyfikowanych przez model.
+
+Dalsza analiza modelu została przeprowadzona przy użyciu drzewa decyzyjnego. Uczelnie ze zbioru danych `College` zostały sklasyfikowane do dwóch klas jako `Yes` lub `No` w zależności od wartości zmiennej `Private`:
+
+```{r}
+library(tree)
+IfPrivate <- factor(ifelse(College$Private == "Yes", "Yes", "No"))
+CollegeH <- data.frame(College, IfPrivate)
+```
+Tym samym zbudowane zostało drzewo klasyfikacyjne do predykcji `IfPrivate` na podstawie pozostałych
+zmiennych (poza `Private`).
+
+```{r classTree}
+private_tree <- tree(IfPrivate ~ . - Private, data = CollegeH)
+summary(private_tree)
+```
+Drzewo decyzyjne podzieliło dane na 10 różnych grup na podstawie reguł podziału, co wskazuje na stosunkowo prosty i łatwy do interpretacji model. Błąd klasyfikacji znajduje się na poziomie 4.89%, przy czym 38 na 777 przypadków zostało błędnie sklasyfikowanych. Niska wartość odchylenia (0.2563) sugeruje, że model dobrze dopasował się do danych.
+
+Przedstawienie graficzne modelu:
+```{r plottree}
+plot(private_tree)
+text(private_tree, pretty = 0)
+```
+Błąd testowy dla drzewa klasyfikacyjnego:
+
+```{r classtreeerror}
+set.seed(1)
+n <- nrow(CollegeH)
+train <- sample(n, n / 2)
+test <- -train
+private_tree <- tree(IfPrivate ~ . - Private, data = CollegeH, subset = train)
+private_class <- predict(private_tree, newdata = CollegeH[test,], type = "class")
+table(private_class, CollegeH$IfPrivate[test])
+mean(private_class != CollegeH$IfPrivate[test])
+```
+Obliczona macierz pomyłek wskazuje, że:
+92 – przypadki, gdzie rzeczywista klasa to `No` i model poprawnie przewidział `No`.
+15 – przypadki, gdzie rzeczywista klasa to `No`, ale model błędnie przewidział `Yes`.
+13 – przypadki, gdzie rzeczywista klasa to `Yes`, ale model błędnie przewidział `No`.
+269 – przypadki, gdzie rzeczywista klasa to `Yes` i model poprawnie przewidział `Yes`.
+
+Błąd klasyfikacji na poziomie 7.20% wskazuje, że model poprawnie sklasyfikował 92.8% przypadków oraz wykazuje dużą skuteczność w przewidywaniu klasy uczelni jako `Private` (Yes).
+
+Przycinanie drzewa:
+
+```{r classtreecv}
+set.seed(1)
+private_tree_cv <- cv.tree(private_tree, FUN = prune.misclass)
+private_tree_cv
+plot(private_tree_cv$size, private_tree_cv$dev, type = "b")
+```
+Zmienna `private_tree_cv$dev` przechowuje liczbę błędów CV. W tym przypadku widać, że poziom błędów CV jest osiąga minimum przy 4. Stąd przycięcie drzewa $T_0$ do poddrzewa z najmniejszym poziomem błędów CV nie powinno przynieść istotnej poprawy, co potwierdza poniższy kod. 
+
+```{r class.tree.prune}
+size_opt <- private_tree_cv$size[which.min(private_tree_cv$dev)]
+private_tree_pruned <- prune.misclass(private_tree, best = size_opt)
+plot(private_tree_pruned)
+text(private_tree_pruned, pretty = 0)
+```
+
+
+
+
